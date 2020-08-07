@@ -110,3 +110,6 @@ if __name__ == '__main__':
 	if args.lang_distr:
 		explore_lang_distribution(data_df, labels_df)
 
+
+
+# python src/data_analysis.py --label_distr 0 --word_clouds 0 --lang_distr 1
