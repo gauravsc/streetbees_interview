@@ -10,15 +10,40 @@ from transformers import get_linear_schedule_with_warmup, AdamW
 from keras_preprocessing.sequence import pad_sequences
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+
 # Global variables
 MAX_LEN = 10
-bs = 32
+bs = 64
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 n_gpu = torch.cuda.device_count()
 data_path = './data/data.csv'
-epochs = 30
+epochs = 40
 max_grad_norm = 1.0
 FULL_FINETUNING = True
+
+
+def visualize_loss(train_loss_values, validation_loss_values):
+	# Use plot styling from seaborn.
+	sns.set(style='darkgrid')
+
+	# Increase the plot size and font size.
+	sns.set(font_scale=1.5)
+	plt.rcParams["figure.figsize"] = (12,6)
+
+	# Plot the learning curve.
+	plt.plot(train_loss_values, 'b-o', label="training loss")
+	plt.plot(validation_loss_values, 'r-o', label="validation loss")
+
+	# Label the plot.
+	plt.title("Learning curve")
+	plt.xlabel("Epoch")
+	plt.ylabel("Loss")
+	plt.legend()
+
+	plt.savefig('./plots/model_train_plots/loss_plots.png')
 
 
 if __name__ == '__main__':
@@ -47,16 +72,23 @@ if __name__ == '__main__':
 	input_ids = pad_sequences(input_ids, maxlen=MAX_LEN, dtype="long", value=0.0, truncating="post", padding="post")
 	attention_masks = [[int(i != 0.0) for i in ii] for ii in input_ids]
 
+	# Train validation split
 	tr_inputs, val_inputs, tr_labels, val_labels = train_test_split(input_ids, all_labels, random_state=2018, test_size=0.1)
 	tr_masks, val_masks, _, _ = train_test_split(attention_masks, input_ids, random_state=2018, test_size=0.1)
 
+	# Train test split
+	temp_save_tr_labels = list(tr_labels)
+	tr_inputs, te_inputs, tr_labels, te_labels  = train_test_split(tr_inputs, tr_labels, random_state=2018, test_size=0.1)
+	tr_masks, te_masks, _, _ = train_test_split(tr_masks, temp_save_tr_labels, random_state=2018, test_size=0.1)
+
 	tr_inputs = torch.tensor(tr_inputs, dtype=torch.long)
 	val_inputs = torch.tensor(val_inputs, dtype=torch.long)
+	
 	tr_labels= torch.tensor(tr_labels, dtype=torch.long)
 	val_labels = torch.tensor(val_labels, dtype=torch.long)
 	tr_masks = torch.tensor(tr_masks, dtype=torch.long)
 	val_masks = torch.tensor(val_masks, dtype=torch.long)
-
+	
 	# Initiating random sampler for model training
 	train_data = TensorDataset(tr_inputs, tr_masks, tr_labels)
 	train_sampler = RandomSampler(train_data)
@@ -100,17 +132,17 @@ if __name__ == '__main__':
 
 	# Code for training the model
 	# Store the average loss after each epoch so we can plot them
-	loss_values, validation_loss_values = [], []
+	loss_values, validation_loss_values, lowest_val_loss = [], [], float('inf')
 	for _ in trange(epochs, desc='Epochs'):
+
+		###################################
+		############  TRAINING  ###########
+		###################################
 
 		# Put the model in training mode
 		model.train()
 		# Set the total loss for the current epoch
 		total_loss = 0
-
-		###################################
-		############  TRAINING  ###########
-		###################################
 
 		# Training loop
 		for step, batch in enumerate(train_dataloader):
@@ -139,38 +171,104 @@ if __name__ == '__main__':
 		############  VALIDATION  ############
 		######################################
 
-		# Validation loop after completion of a training epoch
-		for step, batch in enumerate(valid_dataloader):
-			# Reset the validation loss for this epoch
-			eval_loss, eval_accuracy = 0, 0
-			nb_eval_steps, nb_eval_examples = 0, 0
-			predictions , true_labels = [], []
+		# Put the model into evaluation mode
+		model.eval()
 
-			for batch in valid_dataloader:
-				batch = tuple(t.to(device) for t in batch)
-				b_input_ids, b_input_mask, b_labels = batch
+		# Reset the validation loss for this epoch
+		eval_loss, eval_accuracy = 0, 0
+		nb_eval_steps, nb_eval_examples = 0, 0
+		predictions , true_labels = [], []
 
-				with torch.no_grad():
-					# Forward pass, calculate logit predictions
-					# This will return the logits rather than the loss because we have not provided labels
-					loss, logits = model(b_input_ids, token_type_ids=None,
-									attention_mask=b_input_mask, labels=b_labels)
+		for batch in valid_dataloader:
+			batch = tuple(t.to(device) for t in batch)
+			b_input_ids, b_input_mask, b_labels = batch
 
-				# Move logits and labels to CPU
-				logits = logits.detach().cpu().numpy()
-				label_ids = b_labels.to('cpu').numpy()
+			with torch.no_grad():
+				# Forward pass, calculate logit predictions
+				# This will return the logits rather than the loss because we have not provided labels
+				loss, logits = model(b_input_ids, token_type_ids=None,
+								attention_mask=b_input_mask, labels=b_labels)
 
-				# Calculate the accuracy for this batch of test sentences
-				eval_loss += loss.mean().item()
-				predictions.extend(np.argmax(logits, axis=1))
-				true_labels.extend(label_ids)
+			# Move logits and labels to CPU
+			logits = logits.detach().cpu().numpy()
+			label_ids = b_labels.to('cpu').numpy()
 
-				# print (predictions, true_labels)
+			# Calculate the accuracy for this batch of test sentences
+			eval_loss += loss.mean().item()
+			predictions.extend(np.argmax(logits, axis=1))
+			true_labels.extend(label_ids)
 
-			# Computing loss for validation data
-			eval_loss = eval_loss / len(valid_dataloader)
-			validation_loss_values.append(eval_loss)
-			print("Validation loss: {}".format(eval_loss))
-			pred_labels = [unique_labels[p] for p in predictions]
-			valid_labels = [unique_labels[l] for l in true_labels]
-			print("Validation Accuracy: {}".format(accuracy_score(valid_labels, pred_labels)))
+		# Computing loss for validation data
+		eval_loss = eval_loss / len(valid_dataloader)
+		validation_loss_values.append(eval_loss)
+
+		if eval_loss < lowest_val_loss:
+			lowest_val_loss = eval_loss
+			torch.save(model.state_dict(), './saved_models/bert_classifier.pt')
+
+		print("Validation loss: {}".format(eval_loss))
+		pred_labels = [unique_labels[p] for p in predictions]
+		valid_labels = [unique_labels[l] for l in true_labels]
+		print("Validation Accuracy: {}".format(accuracy_score(valid_labels, pred_labels)))
+
+	visualize_loss(loss_values, validation_loss_values)
+
+
+	######################################
+	##############  Testing  #############
+	######################################
+
+	# Testing the model on a yet unseen test set
+	test_loss_values = []
+
+	# Converting test data to tensors
+	te_inputs = torch.tensor(te_inputs, dtype=torch.long)
+	te_labels = torch.tensor(te_labels, dtype=torch.long)
+	te_masks = torch.tensor(te_masks, dtype=torch.long)
+
+	# Initiating random sampler for model training
+	test_data = TensorDataset(te_inputs, te_masks, te_labels)
+	test_sampler = RandomSampler(test_data)
+	test_dataloader = DataLoader(test_data, sampler=test_sampler, batch_size=bs)
+
+	# Load the best model weights
+	model = BertForMultiClassSequenceClassification(num_labels=len(unique_labels))
+	model.load_state_dict(torch.load('./saved_models/bert_classifier.pt'))
+
+	# Put the model into evaluation mode
+	model.eval()
+
+	# Reset the validation loss for this epoch
+	test_loss, test_accuracy = 0, 0
+	predictions, true_labels = [], []
+
+	for batch in test_dataloader:
+		batch = tuple(t.to(device) for t in batch)
+		b_input_ids, b_input_mask, b_labels = batch
+
+		with torch.no_grad():
+			# Forward pass, calculate logit predictions
+			# This will return the logits rather than the loss because we have not provided labels
+			loss, logits = model(b_input_ids, token_type_ids=None,
+							attention_mask=b_input_mask, labels=b_labels)
+
+		# Move logits and labels to CPU
+		logits = logits.detach().cpu().numpy()
+		label_ids = b_labels.to('cpu').numpy()
+
+		# Calculate the accuracy for this batch of test sentences
+		test_loss += loss.mean().item()
+		predictions.extend(np.argmax(logits, axis=1))
+		true_labels.extend(label_ids)
+
+	# Computing loss for validation data
+	test_loss = test_loss / len(test_dataloader)
+	test_loss_values.append(test_loss)
+
+	print("Test loss: {}".format(test_loss))
+	pred_labels = [unique_labels[p] for p in predictions]
+	test_labels = [unique_labels[l] for l in true_labels]
+	print("Test Accuracy: {}".format(accuracy_score(test_labels, pred_labels)))
+
+
+

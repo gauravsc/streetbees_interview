@@ -1,4 +1,4 @@
-/data/*
+./data/*
 ./plots/*
 *.json
 *.xml
@@ -6,3 +6,4 @@
 *.json
 *.png
 .DS_Store
+*.pt
