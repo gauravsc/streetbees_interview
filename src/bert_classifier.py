@@ -9,17 +9,16 @@ from transformers import BertTokenizer
 from transformers import get_linear_schedule_with_warmup, AdamW
 from keras_preprocessing.sequence import pad_sequences
 from sklearn.model_selection import train_test_split
-
+from sklearn.metrics import accuracy_score
 # Global variables
 MAX_LEN = 10
 bs = 32
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 n_gpu = torch.cuda.device_count()
 data_path = './data/data.csv'
-epochs = 3
+epochs = 30
 max_grad_norm = 1.0
 FULL_FINETUNING = True
-
 
 
 if __name__ == '__main__':
@@ -31,7 +30,7 @@ if __name__ == '__main__':
 	data_df = pd.read_csv(data_path, sep=',')
 	print ('done loading all data from files ...')
 	
-	data_df = data_df.sample(n=5000, replace=True, random_state=45)
+	data_df = data_df.sample(n=32, replace=True, random_state=45)
 
 	all_names = data_df['Name'].tolist()
 	all_labels = data_df['Class'].values
@@ -46,7 +45,7 @@ if __name__ == '__main__':
 	input_ids = [tokenizer.convert_tokens_to_ids(tokenized_name) for tokenized_name in tokenized_names]
 
 	input_ids = pad_sequences(input_ids, maxlen=MAX_LEN, dtype="long", value=0.0, truncating="post", padding="post")
-	attention_masks = [[float(i != 0.0) for i in ii] for ii in input_ids]
+	attention_masks = [[int(i != 0.0) for i in ii] for ii in input_ids]
 
 	tr_inputs, val_inputs, tr_labels, val_labels = train_test_split(input_ids, all_labels, random_state=2018, test_size=0.1)
 	tr_masks, val_masks, _, _ = train_test_split(attention_masks, input_ids, random_state=2018, test_size=0.1)
@@ -109,17 +108,16 @@ if __name__ == '__main__':
 		# Set the total loss for the current epoch
 		total_loss = 0
 
-
-
-		####################
-		####  TRAINING  ####
-		####################
+		###################################
+		############  TRAINING  ###########
+		###################################
 
 		# Training loop
 		for step, batch in enumerate(train_dataloader):
 			# Transfer batch to the GPU
 			batch = tuple(t.to(device) for t in batch)
 			b_input_ids, b_input_masks, b_labels = batch
+			# print (b_labels)
 			# print (b_input_ids.dtype, b_input_masks.dtype, b_labels.dtype)
 			model.zero_grad()
 			loss, logits = model(b_input_ids, token_type_ids=None, attention_mask=b_input_masks, labels=b_labels)
@@ -137,11 +135,9 @@ if __name__ == '__main__':
 		# Store the loss value for plotting the learning curve
 		loss_values.append(avg_train_loss)
 
-		
-
-		####################
-		###  VALIDATION  ###
-		####################
+		######################################
+		############  VALIDATION  ############
+		######################################
 
 		# Validation loop after completion of a training epoch
 		for step, batch in enumerate(valid_dataloader):
@@ -166,17 +162,15 @@ if __name__ == '__main__':
 
 				# Calculate the accuracy for this batch of test sentences
 				eval_loss += loss.mean().item()
-				predictions.extend([list(p) for p in np.argmax(logits, axis=1)])
+				predictions.extend(np.argmax(logits, axis=1))
 				true_labels.extend(label_ids)
+
+				# print (predictions, true_labels)
 
 			# Computing loss for validation data
 			eval_loss = eval_loss / len(valid_dataloader)
 			validation_loss_values.append(eval_loss)
 			print("Validation loss: {}".format(eval_loss))
-			pred_labels = [unique_labels[p_i] for p, l in zip(predictions, true_labels)
-										 for p_i, l_i in zip(p, l) if tag_values[l_i] != "PAD"]
-			valid_labels = [unique_labels[l_i] for l in true_labels
-										  for l_i in l if tag_values[l_i] != "PAD"]
-			print("Validation Accuracy: {}".format(accuracy_score(pred_labels, valid_label)))
-			print("Validation F1-Score: {}".format(f1_score(pred_labels, valid_label)))
-			print()
+			pred_labels = [unique_labels[p] for p in predictions]
+			valid_labels = [unique_labels[l] for l in true_labels]
+			print("Validation Accuracy: {}".format(accuracy_score(valid_labels, pred_labels)))
