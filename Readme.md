@@ -1,5 +1,3 @@
-## To install all required packages
-
-'''
-pip install -r requirements.txt
-'''
+## Installation
+```pip install -r requirements.txt
+```
