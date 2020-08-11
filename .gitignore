@@ -1,9 +1,7 @@
 data/*
-./plots/*
 *.json
 *.xml
 *.csv
 *.json
-*.png
 .DS_Store
 *.pt
