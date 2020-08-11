@@ -20,6 +20,7 @@ bs = 64
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 n_gpu = torch.cuda.device_count()
 data_path = './data/data.csv'
+random_nouns_path = './data/nounlist.txt'
 epochs = 40
 max_grad_norm = 1.0
 FULL_FINETUNING = True
@@ -60,7 +61,15 @@ if __name__ == '__main__':
 	all_names = data_df['Name'].tolist()
 	all_labels = data_df['Class'].values
 
-	unique_labels = [0]+sorted(list(set(all_labels)))
+
+	# Add random names labelled as label 0 so model can identify OOD names during inference
+	random_nouns = pd.read_csv(random_nouns_path, sep=',')
+	random_nouns = random_nouns.sample(n=10, replace=True, random_state=45)
+	all_names.extend(random_nouns['Name'].tolist())
+	all_labels = np.append(all_labels, np.zeros(len(random_nouns)))
+
+	# Create label to index mapping
+	unique_labels = sorted(list(set(all_labels)))
 	label2idx = {t: i for i, t in enumerate(unique_labels)}
 
 	# Instantiate the model
